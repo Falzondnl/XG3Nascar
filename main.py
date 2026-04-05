@@ -25,6 +25,7 @@ from config import DEBUG, PORT, R0_DIR, SERVICE_NAME, SERVICE_VERSION
 from ml.predictor import NascarPredictor
 from feeds.optic_odds import OpticOddsFeed
 from api.routes import health, races, admin
+from api.routes.settlement import router as settlement_router
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
@@ -117,6 +118,7 @@ def create_app() -> FastAPI:
         prefix="/api/v1/nascar/admin",
         tags=["admin"],
     )
+    app.include_router(settlement_router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> JSONResponse:
