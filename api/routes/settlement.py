@@ -42,14 +42,15 @@ class NascarGradingEngine:
     All grades persisted to PostgreSQL.
     """
 
-    GRADE_MAP = {
+    def __init__(self):
+        self.GRADE_MAP = {
         "head_to_head": self._grade_h2h,
         "podium": self._grade_top_n,
         "race_winner": self._grade_outright,
         "top_10": self._grade_top_n,
         "top_3": self._grade_top_n,
         "top_5": self._grade_top_n,
-    }
+        }
 
     def grade_match(
         self, match_id: str, result: MatchResult, markets: List[Dict]
