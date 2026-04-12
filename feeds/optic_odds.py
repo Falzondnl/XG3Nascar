@@ -2,6 +2,10 @@
 Optic Odds feed adapter for NASCAR.
 Fetches live odds from Optic Odds API (motorsports / nascar league).
 Used for competitor price blending if available.
+
+All public methods are async — uses httpx.AsyncClient to avoid blocking the
+event loop.  The synchronous httpx.Client that previously blocked the async
+context has been removed.
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ LEAGUE_ID = "nascar"
 
 class OpticOddsFeed:
     """
-    Thin wrapper around the Optic Odds v3 REST API for NASCAR.
+    Async wrapper around the Optic Odds v3 REST API for NASCAR.
     All methods handle errors gracefully — callers receive None on failure.
     """
 
@@ -29,14 +33,15 @@ class OpticOddsFeed:
         self._base = OPTIC_ODDS_BASE_URL
         self._headers = {"X-Api-Key": api_key} if api_key else {}
 
-    def _get(self, path: str, params: Optional[dict] = None) -> Optional[dict]:
+    async def _get(self, path: str, params: Optional[dict] = None) -> Optional[dict]:
+        """Async HTTP GET helper — non-blocking, safe for FastAPI async handlers."""
         if not self._api_key:
             logger.debug("optic_odds_skipped no_api_key path=%s", path)
             return None
         url = f"{self._base}{path}"
         try:
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.get(url, headers=self._headers, params=params or {})
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=self._headers, params=params or {})
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:
@@ -46,9 +51,9 @@ class OpticOddsFeed:
             logger.error("optic_odds_error path=%s error=%s", path, exc, exc_info=True)
             return None
 
-    def get_upcoming_races(self) -> Optional[list[dict[str, Any]]]:
+    async def get_upcoming_races(self) -> Optional[list[dict[str, Any]]]:
         """Fetch upcoming NASCAR Cup races."""
-        data = self._get(
+        data = await self._get(
             "/fixtures",
             params={"sport": SPORT_ID, "league": LEAGUE_ID, "is_live": "false"},
         )
@@ -56,9 +61,9 @@ class OpticOddsFeed:
             return None
         return data.get("data", [])
 
-    def get_race_odds(self, fixture_id: str) -> Optional[dict[str, Any]]:
+    async def get_race_odds(self, fixture_id: str) -> Optional[dict[str, Any]]:
         """Fetch race winner odds for a specific fixture."""
-        data = self._get(f"/fixtures/{fixture_id}/odds")
+        data = await self._get(f"/fixtures/{fixture_id}/odds")
         if data is None:
             return None
         return data.get("data")
