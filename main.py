@@ -25,6 +25,7 @@ from config import DEBUG, PORT, R0_DIR, SERVICE_NAME, SERVICE_VERSION
 from ml.predictor import NascarPredictor
 from feeds.optic_odds import OpticOddsFeed
 from api.routes import health, races, admin
+from api.routes.outrights import router as outrights_router
 from api.routes.settlement import router as settlement_router
 
 logging.basicConfig(
@@ -117,6 +118,11 @@ def create_app() -> FastAPI:
         admin.router,
         prefix="/api/v1/nascar/admin",
         tags=["admin"],
+    )
+    app.include_router(
+        outrights_router,
+        prefix="/api/v1/nascar/outrights",
+        tags=["outrights"],
     )
     app.include_router(settlement_router)
 

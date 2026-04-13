@@ -19,7 +19,14 @@ from config import OPTIC_ODDS_API_KEY, OPTIC_ODDS_BASE_URL
 logger = logging.getLogger(__name__)
 
 SPORT_ID = "motorsports"
-LEAGUE_ID = "nascar"
+# Optic Odds v3 confirmed slugs for NASCAR series (verified 2026-04-13)
+LEAGUE_IDS = [
+    "nascar_-_cup_series",
+    "nascar_-_xfinity_series",
+    "nascar_-_truck_series",
+]
+# Primary league for default upcoming query (Cup Series)
+LEAGUE_ID = "nascar_-_cup_series"
 
 
 class OpticOddsFeed:
@@ -51,15 +58,34 @@ class OpticOddsFeed:
             logger.error("optic_odds_error path=%s error=%s", path, exc, exc_info=True)
             return None
 
-    async def get_upcoming_races(self) -> Optional[list[dict[str, Any]]]:
-        """Fetch upcoming NASCAR Cup races."""
-        data = await self._get(
-            "/fixtures",
-            params={"sport": SPORT_ID, "league": LEAGUE_ID, "is_live": "false"},
-        )
-        if data is None:
-            return None
-        return data.get("data", [])
+    async def get_upcoming_races(self, series: str = "all") -> Optional[list[dict[str, Any]]]:
+        """Fetch upcoming NASCAR races across Cup, Xfinity and Truck series.
+
+        Args:
+            series: "cup", "xfinity", "truck", or "all" (default).
+        Returns:
+            Combined list of fixture dicts from all requested series, or None on error.
+        """
+        if series == "all":
+            leagues = LEAGUE_IDS
+        elif series == "cup":
+            leagues = ["nascar_-_cup_series"]
+        elif series == "xfinity":
+            leagues = ["nascar_-_xfinity_series"]
+        elif series == "truck":
+            leagues = ["nascar_-_truck_series"]
+        else:
+            leagues = [LEAGUE_ID]
+
+        all_fixtures: list[dict[str, Any]] = []
+        for league in leagues:
+            data = await self._get(
+                "/fixtures/active",
+                params={"sport": SPORT_ID, "league": league},
+            )
+            if data is not None:
+                all_fixtures.extend(data.get("data", []))
+        return all_fixtures if all_fixtures else None
 
     async def get_race_odds(self, fixture_id: str) -> Optional[dict[str, Any]]:
         """Fetch race winner odds for a specific fixture."""

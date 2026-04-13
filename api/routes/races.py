@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from feeds.optic_odds import OpticOddsFeed
 from pricing.markets import NascarPricer
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,51 @@ class H2HRequest(BaseModel):
     drivers: list[DriverEntry] = Field(..., min_length=2)
     driver_a: str
     driver_b: str
+
+
+@router.get("/upcoming")
+async def get_upcoming_races(
+    series: str = "all",
+    limit: int = 50,
+    request: Request = None,
+) -> JSONResponse:
+    """Fetch upcoming NASCAR races from Optic Odds feed.
+
+    Args:
+        series: "cup", "xfinity", "truck", or "all" (default — all three series).
+        limit:  Maximum fixtures to return per series (1–200).
+    """
+    optic_feed: Optional[OpticOddsFeed] = getattr(request.app.state, "optic_feed", None)
+    if optic_feed is None:
+        optic_feed = OpticOddsFeed()
+
+    if not optic_feed.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="OPTIC_ODDS_API_KEY not configured — set environment variable",
+        )
+
+    try:
+        races = await optic_feed.get_upcoming_races(series=series)
+    except Exception as exc:
+        logger.error("Failed to fetch upcoming NASCAR races: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Optic Odds API error: {exc}") from exc
+
+    if races is None:
+        races = []
+
+    races = races[:max(1, min(limit, 200))]
+
+    logger.info(
+        "get_upcoming_races series=%s limit=%d returned=%d",
+        series, limit, len(races),
+    )
+
+    return JSONResponse({
+        "series": series,
+        "count": len(races),
+        "races": races,
+    })
 
 
 @router.post("/price")
