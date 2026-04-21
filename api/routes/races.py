@@ -46,9 +46,9 @@ class H2HRequest(BaseModel):
 
 @router.get("/upcoming")
 async def get_upcoming_races(
+    request: Request,
     series: str = "all",
     limit: int = 50,
-    request: Request = None,
 ) -> JSONResponse:
     """Fetch upcoming NASCAR races from Optic Odds feed.
 
