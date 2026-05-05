@@ -12,3 +12,4 @@ httpx>=0.25.0
 pydantic>=2.0.0
 
 sentry-sdk[fastapi]>=1.40.0
+structlog>=24.0.0,<26.0
