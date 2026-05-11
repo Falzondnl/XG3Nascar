@@ -121,6 +121,7 @@ class PredictResponseData(BaseModel):
     track_length: float
     field_size: int
     results: List[DriverPrediction]
+    prediction_source: str = "ml_ensemble"
 
 
 # ---------------------------------------------------------------------------
