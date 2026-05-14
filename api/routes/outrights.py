@@ -142,16 +142,37 @@ async def get_championship_outrights(
     }
     elo_key = elo_key_map[surface]
 
+    # LOCK-NASCAR-ELO-DEFAULT-NO-SILENT-FALLBACK-001:
+    # Never silently assign ELO 1500.0 when no real rating exists in the driver record.
+    # A driver with no ELO data MUST be skipped — not priced with a fake 1500 default
+    # which would make all data-absent drivers appear equivalent to average.
     raw_pairs: list[tuple[str, float]] = []
     driver_extra: dict[str, dict] = {}
+    skipped_no_elo: list[str] = []
     for item in raw_driver_list:
         name = str(item.get("driver") or item.get("name") or "Unknown")
-        elo_val = float(item.get(elo_key) or item.get("elo_overall", 1500.0))
+        raw_elo = item.get(elo_key) or item.get("elo_overall")
+        if raw_elo is None or float(raw_elo) == 0.0:
+            skipped_no_elo.append(name)
+            logger.warning(
+                "nascar_championship_no_elo_skipped driver=%s surface=%s "
+                "LOCK-NASCAR-ELO-DEFAULT-NO-SILENT-FALLBACK-001",
+                name, surface,
+            )
+            continue
+        elo_val = float(raw_elo)
         raw_pairs.append((name, elo_val))
         driver_extra[name] = {
             "career_wins": item.get("career_wins", 0),
             "career_races": item.get("career_races", 0),
         }
+
+    if skipped_no_elo:
+        logger.error(
+            "nascar_championship_elo_missing_drivers count=%d surface=%s drivers=%s "
+            "LOCK-NASCAR-ELO-DEFAULT-NO-SILENT-FALLBACK-001",
+            len(skipped_no_elo), surface, skipped_no_elo[:10],
+        )
 
     # Sort by the chosen surface ELO, take top_n
     raw_pairs.sort(key=lambda x: x[1], reverse=True)
