@@ -30,6 +30,16 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+try:
+    from pricing.tier2b_reverse_engineer import (
+        NASCARTier2BReverseEngineer,
+        get_tier2b_engineer as _get_nascar_tier2b,
+    )
+    _TIER2B_AVAILABLE = True
+except ImportError:
+    _TIER2B_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -210,3 +220,61 @@ async def get_championship_outrights(
         "margin": _CHAMPIONSHIP_MARGIN,
         "total_probability": round(sum(e["probability"] for e in entries), 6),
     })
+
+
+# ---------------------------------------------------------------------------
+# Tier 2B reverse-engineer endpoint
+# LOCK-NASCAR-TIER-2B-REVERSE-ENGINEER-001
+# ---------------------------------------------------------------------------
+
+
+class NASCARTier2BRequest(BaseModel):
+    market_id: str = Field(..., description="Market identifier")
+    outright_odds: Dict[str, float] = Field(..., description="driver_id -> decimal odds")
+    series: str = Field("cup", description="cup | xfinity | truck")
+    market_type: str = Field("race_winner", description="race_winner | championship")
+
+
+@router.post(
+    "/tier2b/reverse-engineer",
+    summary="Reverse-engineer Plackett-Luce skills from NASCAR outright odds",
+)
+async def nascar_tier2b_reverse_engineer(req: NASCARTier2BRequest) -> JSONResponse:
+    """Tier 2B fallback for NASCAR race / championship outrights."""
+    if not _TIER2B_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TIER2B_ENGINE_UNAVAILABLE",
+                "message": "NASCAR Tier 2B PL reverse-engineer module not loaded",
+            },
+        )
+    try:
+        eng = _get_nascar_tier2b()
+        result = eng.reverse_engineer(
+            market_id=req.market_id,
+            outright_odds=req.outright_odds,
+            series=req.series,
+            market_type=req.market_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "TIER2B_INVALID_INPUT", "message": str(exc)},
+        ) from exc
+
+    payload: dict[str, Any] = {
+        "market_id": req.market_id,
+        "market_type": req.market_type,
+        "series": req.series,
+        "n_drivers": result.n_drivers,
+        "skills": dict(zip(result.driver_ids, [float(s) for s in result.skills])),
+        "win_probs": dict(zip(result.driver_ids, [float(p) for p in result.win_probs])),
+        "top_5_probs": dict(zip(result.driver_ids, [float(p) for p in result.top_5_probs()])),
+        "summary": result.to_summary(),
+    }
+    if result.n_drivers >= 10:
+        payload["top_10_probs"] = dict(
+            zip(result.driver_ids, [float(p) for p in result.top_10_probs()])
+        )
+    return JSONResponse(payload)
