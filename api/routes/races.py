@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -98,10 +99,74 @@ async def price_race(body: RacePriceRequest, request: Request) -> JSONResponse:
     probabilities and decimal odds.
     """
     predictor = getattr(request.app.state, "predictor", None)
-    if predictor is None or not predictor.is_loaded:
-        raise HTTPException(
+    predictor_available = predictor is not None and predictor.is_loaded
+
+    if not predictor_available:
+        # LOCK-NASCAR-TIER-2-CASCADE-001: Tier 1 model unavailable.
+        # Attempt Tier 2: OpticOdds Pinnacle scrape → devig → market_scrape response.
+        optic_feed: Optional[OpticOddsFeed] = getattr(request.app.state, "optic_feed", None)
+        if optic_feed is None:
+            optic_feed = OpticOddsFeed()
+
+        pinnacle_markets = None
+        if optic_feed.is_available():
+            try:
+                pinnacle_markets = await optic_feed.get_race_odds_devigged(
+                    race_name=body.race_name,
+                    track=body.track,
+                    season=body.season,
+                )
+            except Exception as t2_exc:
+                logger.warning(
+                    "nascar_tier2_optic_failed race=%s track=%s error=%s "
+                    "LOCK-NASCAR-TIER-2-CASCADE-001",
+                    body.race_name, body.track, t2_exc,
+                )
+
+        if pinnacle_markets is not None:
+            # Tier 2 succeeded — return market_scrape response.
+            # LOCK-NASCAR-PRED-SRC-MS-RESPONSE-001
+            logger.info(
+                "nascar_tier2_market_scrape race=%s track=%s "
+                "LOCK-NASCAR-TIER-2-CASCADE-001 LOCK-NASCAR-PRED-SRC-MS-RESPONSE-001",
+                body.race_name, body.track,
+            )
+            return JSONResponse({
+                "race_name": body.race_name,
+                "track": body.track,
+                "season": body.season,
+                "surface": body.surface,
+                "field_size": len(body.drivers),
+                "markets": pinnacle_markets,
+                "prediction_source": "market_scrape",
+                "model_available": False,
+                "tier": 2,
+            })
+
+        # LOCK-NASCAR-TIER-3-REFUSE-503-001: Tier 1 and Tier 2 both unavailable.
+        # Refuse-to-price with structured error. Never return stale/empty/fake data.
+        _cid = str(uuid.uuid4())
+        logger.error(
+            "nascar_fixture_unpriced race=%s track=%s correlation_id=%s "
+            "LOCK-NASCAR-TIER-3-REFUSE-503-001",
+            body.race_name, body.track, _cid,
+        )
+        return JSONResponse(
             status_code=503,
-            detail="NASCAR predictor not loaded — models may still be training",
+            content={
+                "code": "FIXTURE_UNPRICED",
+                "reason": "no_model_no_market_data",
+                "message": (
+                    f"NASCAR predictor not loaded and Optic Odds Pinnacle scrape "
+                    f"unavailable for {body.race_name} at {body.track}. "
+                    f"Cannot price: silent fallback to uniform odds is forbidden. "
+                    f"LOCK-NASCAR-TIER-3-REFUSE-503-001"
+                ),
+                "correlation_id": _cid,
+                "retry_after": 30,
+                "race_name": body.race_name,
+                "track": body.track,
+            },
         )
 
     drivers_payload = [d.model_dump() for d in body.drivers]
@@ -133,6 +198,9 @@ async def price_race(body: RacePriceRequest, request: Request) -> JSONResponse:
         predictions[0]["win_prob"] if predictions else 0.0,
     )
 
+    # LOCK-NASCAR-PRED-SRC-MS-RESPONSE-001: prediction_source MUST be present on
+    # every priced response. "model" = live ML ensemble. Any deviation MUST change
+    # this field — never leave it absent (bet365-grade requirement).
     return JSONResponse({
         "race_name": body.race_name,
         "track": body.track,
@@ -141,6 +209,7 @@ async def price_race(body: RacePriceRequest, request: Request) -> JSONResponse:
         "field_size": len(body.drivers),
         "predictions": predictions,
         "markets": markets,
+        "prediction_source": "model",
     })
 
 
@@ -174,9 +243,11 @@ async def price_h2h(body: H2HRequest, request: Request) -> JSONResponse:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"H2H pricing error: {exc}") from exc
 
+    # LOCK-NASCAR-PRED-SRC-MS-RESPONSE-001: prediction_source on every priced response.
     return JSONResponse({
         "race_name": body.race_name,
         "track": body.track,
         "season": body.season,
         "h2h": h2h,
+        "prediction_source": "model",
     })
